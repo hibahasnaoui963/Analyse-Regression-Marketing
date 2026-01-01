@@ -1,0 +1,162 @@
+---
+title: "Régression Linéaire Multiple"
+author: "Hiba Hasnaoui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+# Introduction 
+
+Ce projet vise à modéliser le comportement d'achat via une régression linéaire multiple.
+
+Objectif : Prédire le montant total des dépenses (TotalSpent).
+
+Données : Kaggle - Customer Personality Analysis(https://www.kaggle.com/datasets/imakash3011/customer-personality-analysis)
+
+Méthode : Nettoyage, sélection de variables (AIC), diagnostic et Cross-Validation.
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(car)
+library(FactoMineR)
+library(ggplot2)
+library(caret)
+```
+
+
+# Chargement et nettoyage du jeu de données
+
+
+
+```{r chargement}
+# Chargement du fichier 
+marketing <- read.csv("marketing_campaign.csv", sep="\t", header=TRUE)
+```
+
+
+```{r nettoyage, warning=FALSE}
+# Traitement des valeurs manquantes
+# On remplace les NA de Income par la médiane pour ne pas perdre trop de données
+marketing$Income[is.na(marketing$Income)] <- median(marketing$Income, na.rm = TRUE)
+
+# Nettoyage des Outliers (Valeurs aberrantes)
+# On retire les clients nés avant 1900 ou ayant un revenu > 200 000 (erreurs probables)
+# Cette version fonctionnera SANS library(tidyverse)
+marketing <- marketing |> 
+  dplyr::filter(Year_Birth > 1900 & Income < 200000)
+# Création d'une variable cible (Y) : Montant total dépensé
+marketing$TotalSpent <- marketing$MntWines + marketing$MntFruits + 
+                        marketing$MntMeatProducts + marketing$MntFishProducts + 
+                        marketing$MntSweetProducts + marketing$MntGoldProds
+```
+
+# Étude descriptive
+
+```{r eda-visualisation, message=FALSE, warning=FALSE, paged.print=FALSE}
+# Visualisation de la relation Revenu / Dépenses
+ggplot(marketing, aes(x = Income, y = TotalSpent)) +
+  geom_point(alpha = 0.3, color = "black") +
+  geom_smooth(method = "lm", color = "turquoise") + # Ajoute la droite de régression
+  labs(title = "Relation entre Revenu Annuel et Dépenses Totales",
+       x = "Revenu Annuel",
+       y = "Total des Dépenses") +
+  theme_minimal()
+```
+
+Globalement, plus le revenu d'un client est élevé, plus son montant total de dépenses dans l'entreprise augmente.
+
+```{r modele-complet, warning=FALSE}
+# Le Modèle Multiple
+modele_sae <- lm(TotalSpent ~ Income + Kidhome + Teenhome + Education, data = marketing)
+
+# Affichage pour l'interprétation
+summary(modele_sae)
+```
+
+Income (Revenu) : Le coefficient est de 1.941×10−2 (0,019) avec une p-value très faible (<2×10−16), donc très significatif. Concrètement, pour chaque euro de revenu supplémentaire, les dépenses augmentent d'environ 0,02 €.
+
+Kidhome & Teenhome : Ces deux variables ont un impact négatif très fort et significatif (−235,7 et −185,4). Avoir un enfant ou un adolescent à la maison réduit drastiquement le budget disponible pour les produits suivis dans ce dataset (probablement des produits "plaisir" comme le vin ou la viande)
+
+Education : Note bien que toutes les modalités d'éducation (Basic, Graduation, PhD, etc.) ont des p-values supérieures à 0,05. Cela signifie que dans ce modèle précis, le niveau d'étude n'influe pas de manière significative sur le montant total des dépenses par rapport à la catégorie de référence.
+
+Adjusted R-squared (0,6833) : C'est un excellent résultat. Cela signifie que 68,3 % de la variabilité des dépenses des clients est expliquée par ton modèle (Revenu + Famille + Éducation)
+
+F-statistic : La p-value globale est inférieure à 2,2×10−16, ce qui confirme que ton modèle est globalement très performant et bien meilleur qu'un simple calcul de moyenne.
+
+# Graphique diagnostique 
+
+```{r diagnostic-residus, warning=FALSE}
+# Génération des 4 graphiques de diagnostic pour vérifier les résidus
+par(mfrow = c(2, 2))
+plot(modele_sae) # le nom du lm
+```
+
+Interprétation des Graphiques Diagnostics 
+
+Residuals vs Fitted : On observe une légère forme de "U" dans la ligne rouge. Cela suggère que la relation n'est peut-être pas parfaitement linéaire ou qu'il manque une variable.
+
+Normal Q-Q : Les points suivent bien la ligne au centre, mais s'en écartent aux extrémités (points 1298, 1898, 2180). Cela signifie que les résidus ne sont pas parfaitement normaux (présence de "queues lourdes").
+
+Scale-Location : La ligne rouge remonte vers la droite et le nuage s'élargit. L'hétéroscédasticité détectée suggère que les prédictions sont plus précises pour les bas revenus que pour les très hauts revenus. Une transformation logarithmique de la variable Income pourrait être une piste d'amélioration future.
+
+Residuals vs Leverage (Bas à droite) : Ce graphique identifie les points influents. Les points numérotés (comme le 1298) sont des individus atypiques qui "tirent" sur la droite de régression et pourraient fausser tes coefficients.
+
+```{r selection-stepwise, warning=FALSE}
+# Sélection descendante basée sur le critère AIC
+modele_final <- step(modele_sae, direction = "backward")
+
+# Affichage du nouveau modèle optimisé
+summary(modele_final)
+```
+
+Interpretation du modele finale :
+
+Le Revenu (Income) : Le coefficient est de 0,0193. Cela signifie que pour chaque dollar supplémentaire de revenu annuel, les dépenses totales augmentent en moyenne de 0,019 dollar, toutes choses égales par ailleurs. Cette variable est extrêmement significative (p<2.10−16).
+
+Enfants à la maison (Kidhome) : Le coefficient est de −237,0. Chaque enfant supplémentaire au foyer diminue les dépenses totales de 237 dollars en moyenne. C'est l'impact négatif le plus fort sur le budget de consommation étudié ici.
+
+Adolescents à la maison (Teenhome) : Le coefficient est de −187,1. La présence d'un adolescent diminue les dépenses de 187 dollars en moyenne. On remarque que l'impact est moins fort que pour les jeunes enfants, mais reste significatif et négatif.
+
+L'Intercept : Il est de −197,1. Mathématiquement, c'est la valeur de dépense si toutes les autres variables étaient à zéro. Ici, il sert surtout à ajuster le modèle, car un revenu de 0 n'a pas de sens marketing.
+
+
+Analyse de la qualité du modèle 
+
+
+R2 ajusté (0,6833) : "Notre modèle explique environ 68,3% de la variabilité des dépenses totales. C'est un excellent score pour un modèle de comportement d'achat, indiquant que le revenu et la structure familiale sont des prédicteurs très puissants."
+
+Sélection de variables : "L'utilisation de la méthode Stepwise (AIC) a permis d'écarter la variable Education, qui n'apportait pas de gain de précision significatif au modèle, permettant ainsi d'avoir un modèle plus simple et plus robuste (principe de parcimonie)."
+
+
+
+# Validation de la prévision (Cross-validation)
+
+
+```{r cross-validation, message=FALSE, warning=FALSE}
+# Définition de la méthode de contrôle (10-fold CV)
+train_control <- trainControl(method = "cv", number = 10)
+
+# Entraînement et test du modèle
+model_validation <- train(TotalSpent ~ Income + Kidhome + Teenhome, 
+                          data = marketing, 
+                          method = "lm", 
+                          trControl = train_control)
+
+# Affichage des performances réelles (RMSE, R-squared)
+print(model_validation)
+```
+
+Le R-squared obtenu par validation croisée (environ 0.68) est très proche de celui du modèle initial. Cela prouve que notre modèle est stable et qu'il performera bien sur de nouvelles données clients.
+
+# Conclusion
+
+Ciblage : Les campagnes marketing devraient prioritairement viser les foyers de type "DINK" (Double Income, No Kids) ou les "Empty Nesters" (parents dont les enfants ont quitté le foyer).
+
+Adaptation de l'offre : La présence d'enfants agissant comme un frein majeur à la dépense, l'entreprise pourrait envisager de créer une gamme de produits "famille" plus accessible ou des offres groupées pour lever ce frein financier
+
+
